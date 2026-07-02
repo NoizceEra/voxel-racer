@@ -127,13 +127,31 @@
 
         // Input
         const keys = {w:'forward',ArrowUp:'forward',s:'backward',ArrowDown:'backward',a:'left',ArrowLeft:'left',d:'right',ArrowRight:'right',' ':'brake'};
-        addEventListener('keydown', e => { if(keys[e.key]) input[keys[e.key]]=true; if(e.key==='r') reset(); });
+        addEventListener('keydown', e => { if(keys[e.key]) input[keys[e.key]]=true; if(e.key.toLowerCase()==='r') reset(); });
         addEventListener('keyup', e => { if(keys[e.key]) input[keys[e.key]]=false; });
 
-        let tx=0;
-        addEventListener('touchstart', e=>{ tx=e.touches[0].clientX; if(e.touches[0].clientY<innerHeight*0.45) input.forward=true; });
-        addEventListener('touchend', ()=>{input.forward=input.left=input.right=false;});
-        addEventListener('touchmove', e=>{ const dx=e.touches[0].clientX-tx; input.left=dx<-35; input.right=dx>35; });
+        // Mobile controls
+        const resetEl = document.createElement('div');
+        resetEl.textContent = 'RESET';
+        resetEl.style.cssText = 'position:fixed;bottom:22px;right:24px;color:#ff0;border:2px solid #ff0;padding:4px 14px;font-size:15px;cursor:pointer;z-index:200;';
+        document.body.appendChild(resetEl);
+        resetEl.addEventListener('touchstart', e=>{e.preventDefault();reset();});
+        resetEl.addEventListener('click', reset);
+
+        let touchStartX=0, isDragging=false;
+        addEventListener('touchstart', e=>{
+          if(!e.touches.length) return;
+          const t=e.touches[0];
+          touchStartX=t.clientX; isDragging=true;
+          if(t.clientY<innerHeight*0.52) input.forward=true;
+          if(t.clientY>innerHeight*0.52 && t.clientX>innerWidth*0.55) input.brake=true;
+        },{passive:false});
+        addEventListener('touchend',()=>{input.forward=input.left=input.right=input.brake=false;isDragging=false;},{passive:false});
+        addEventListener('touchmove',e=>{
+          if(!isDragging||!e.touches.length)return;
+          const dx=e.touches[0].clientX-touchStartX;
+          input.left=dx<-28; input.right=dx>28;
+        },{passive:false});
 
         function reset(){ state.pos.set(0,1.5,-18); state.yaw=0; state.speed=0; state.currentCP=0; }
 
