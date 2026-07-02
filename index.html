@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VOXEL RACER</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #0a0a0a; font-family: monospace; }
+        canvas { display: block; }
+        #hud {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            color: #0f0; text-shadow: 0 0 10px #0f0; font-size: 18px; z-index: 100;
+            background: rgba(0,0,0,0.65); padding: 10px 30px; border: 2px solid #0f0;
+            display: flex; gap: 50px; align-items: center;
+        }
+    </style>
+</head>
+<body>
+    <div id="hud">
+        <div id="lap">LAP 1</div>
+        <div id="speed">0 km/h</div>
+        <div style="color:#ff0">R = RESET</div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.module.js';
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(72, innerWidth/innerHeight, 0.1, 1200);
+        const renderer = new THREE.WebGLRenderer({antialias:true});
+        renderer.setSize(innerWidth, innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // Lighting
+        scene.add(new THREE.HemisphereLight(0x87ceeb, 0x333333, 0.8));
+        const sun = new THREE.DirectionalLight(0xffffff, 1.15);
+        sun.position.set(60, 95, 40);
+        sun.castShadow = true;
+        sun.shadow.mapSize.width = 2048;
+        sun.shadow.mapSize.height = 2048;
+        scene.add(sun);
+
+        // Voxel Track
+        function createTrack() {
+            const g = new THREE.Group();
+            const grass = new THREE.MeshLambertMaterial({color:0x2e6b3e});
+            const road = new THREE.MeshLambertMaterial({color:0x333333});
+            const barrier = new THREE.MeshLambertMaterial({color:0x8B4513});
+
+            const ground = new THREE.Mesh(new THREE.BoxGeometry(140,1.2,140), grass);
+            ground.position.y = -0.6;
+            ground.receiveShadow = true;
+            g.add(ground);
+
+            const shape = [[-35,-25],[35,-25],[45,-5],[35,22],[-35,22],[-45,-5],[-35,-25]];
+            for (let i=0; i<shape.length; i++) {
+                const a = shape[i], b = shape[(i+1)%shape.length];
+                const len = Math.hypot(b[0]-a[0], b[1]-a[1]);
+                const r = new THREE.Mesh(new THREE.BoxGeometry(len+5, 0.8, 9.5), road);
+                r.position.set((a[0]+b[0])/2, 0.4, (a[1]+b[1])/2);
+                r.rotation.y = Math.atan2(b[0]-a[0], b[1]-a[1]);
+                r.castShadow = r.receiveShadow = true;
+                g.add(r);
+            }
+            return g;
+        }
+        scene.add(createTrack());
+
+        // Checkpoints
+        const checkpoints = [
+            new THREE.Vector3(-35,1.5,-25),
+            new THREE.Vector3(40,1.5,-5),
+            new THREE.Vector3(-35,1.5,22)
+        ];
+
+        // Car
+        const car = new THREE.Group();
+        const body = new THREE.Mesh(new THREE.BoxGeometry(2.8,1.6,4.8), new THREE.MeshLambertMaterial({color:0xff2255}));
+        body.position.y = 1.4; body.castShadow = true; car.add(body);
+        const roof = new THREE.Mesh(new THREE.BoxGeometry(2.2,1.1,2.4), new THREE.MeshLambertMaterial({color:0xcc1133}));
+        roof.position.set(0,2.75,-0.4); roof.castShadow = true; car.add(roof);
+        [[-1.4,0.75,-1.6],[1.4,0.75,-1.6],[-1.4,0.75,1.6],[1.4,0.75,1.6]].forEach(([x,y,z]) => {
+            const w = new THREE.Mesh(new THREE.CylinderGeometry(0.72,0.72,0.55,14), new THREE.MeshLambertMaterial({color:0x111}));
+            w.rotation.z = Math.PI/2; w.position.set(x,y,z); w.castShadow = true; car.add(w);
+        });
+        scene.add(car);
+
+        // State
+        const state = { pos: new THREE.Vector3(0,1.5,-18), yaw:0, speed:0, currentCP:0, lap:1 };
+        const input = { forward:false, backward:false, left:false, right:false, brake:false };
+
+        function updateCar(dt) {
+            const max = 48;
+            let target = 0;
+            if (input.forward) target = max;
+            if (input.backward) target = -max * 0.55;
+            if (input.brake) state.speed *= 0.88;
+            else state.speed = THREE.MathUtils.lerp(state.speed, target, 0.09);
+
+            if (Math.abs(state.speed) > 4) {
+                const steer = (input.left?1:0) - (input.right?1:0);
+                state.yaw += steer * 3.1 * dt * Math.min(Math.abs(state.speed)/max, 1) * (state.speed > 0 ? 1 : -1);
+            }
+
+            const dir = new THREE.Vector3(Math.sin(state.yaw), 0, Math.cos(state.yaw));
+            state.pos.add(dir.clone().multiplyScalar(state.speed * dt * 0.95));
+            state.pos.y = 1.5;
+
+            car.position.copy(state.pos);
+            car.rotation.y = state.yaw;
+
+            const camOff = new THREE.Vector3(0,9.5,-19.5).applyAxisAngle(new THREE.Vector3(0,1,0), state.yaw);
+            camera.position.lerp(state.pos.clone().add(camOff), 0.12);
+            camera.lookAt(state.pos.x, state.pos.y+4, state.pos.z);
+
+            // Checkpoints
+            if (state.pos.distanceTo(checkpoints[state.currentCP]) < 7) {
+                state.currentCP = (state.currentCP + 1) % 3;
+                if (state.currentCP === 0) {
+                    state.lap++;
+                    document.getElementById('lap').textContent = `LAP ${state.lap}`;
+                }
+            }
+            document.getElementById('speed').textContent = `${Math.round(Math.abs(state.speed)*1.8)} km/h`;
+        }
+
+        // Input
+        const keys = {w:'forward',ArrowUp:'forward',s:'backward',ArrowDown:'backward',a:'left',ArrowLeft:'left',d:'right',ArrowRight:'right',' ':'brake'};
+        addEventListener('keydown', e => { if(keys[e.key]) input[keys[e.key]]=true; if(e.key==='r') reset(); });
+        addEventListener('keyup', e => { if(keys[e.key]) input[keys[e.key]]=false; });
+
+        let tx=0;
+        addEventListener('touchstart', e=>{ tx=e.touches[0].clientX; if(e.touches[0].clientY<innerHeight*0.45) input.forward=true; });
+        addEventListener('touchend', ()=>{input.forward=input.left=input.right=false;});
+        addEventListener('touchmove', e=>{ const dx=e.touches[0].clientX-tx; input.left=dx<-35; input.right=dx>35; });
+
+        function reset(){ state.pos.set(0,1.5,-18); state.yaw=0; state.speed=0; state.currentCP=0; }
+
+        addEventListener('resize', ()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+
+        let last = performance.now();
+        function loop(){
+            requestAnimationFrame(loop);
+            const dt = Math.min((performance.now()-last)/1000, 0.12);
+            last = performance.now();
+            updateCar(dt);
+            renderer.render(scene, camera);
+        }
+        camera.position.set(0,28,-42);
+        loop();
+    </script>
+</body>
+</html>
